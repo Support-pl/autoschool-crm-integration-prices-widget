@@ -1,73 +1,95 @@
-# React + TypeScript + Vite
+# Autoschool Pricing Widget
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Standalone embeddable calculator widget for driving school pricing. Built with React + Vite, compiled to a single self-contained IIFE bundle (styles included).
 
-Currently, two official plugins are available:
+## Usage
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```html
+<div id="calculator"></div>
 
-## React Compiler
+<!-- pinned version (recommended for production) -->
+<script src="https://cdn.jsdelivr.net/gh/Support-pl/autoschool-crm-integration-prices-widget@1.0.0/dist/calculator-widget.js"></script>
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+<!-- or always latest -->
+<!-- <script src="https://cdn.jsdelivr.net/gh/Support-pl/autoschool-crm-integration-prices-widget@latest/dist/calculator-widget.js"></script> -->
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+<script>
+  CalculatorWidget.mount('#calculator', {
+    apiUrl: 'https://your-crm.com/api/public/pricing',
+    locale: 'pl',
+    contactUrl: '/contact',
+  });
+</script>
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Config options
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `apiUrl` | `string` | — | URL of the pricing endpoint (`GET` returns `{ locations, categories, packages }`) |
+| `locale` | `string` | `'pl'` | UI language. Supported: `pl`, `ru`, `uk`, `en` |
+| `contactUrl` | `string` | `'/contact'` | href for the "Sign up" CTA button |
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## API contract
+
+`GET {apiUrl}` must return:
+
+```ts
+{
+  locations: { id: string; name: string; city: string | null; code: string }[];
+  categories: { id: string; slug: string; name: Record<string, string>; sortOrder: number }[];
+  packages: {
+    id: string;
+    name: string;
+    price: number;
+    subtitle?: Record<string, string>;
+    features?: string[];
+    featuresI18n?: Record<string, string>[];
+    forStudentsWithLicense?: boolean;
+    serviceCategory: { slug: string };
+    pricingRules?: {
+      locationPricing?: {
+        [locationId: string]: {
+          manual?: number;
+          automatic?: number;
+        };
+      };
+    };
+  }[];
+}
 ```
+
+### Price resolution
+
+For a given package, location, and gearbox type the price resolves as:
+
+```
+pricingRules.locationPricing[locationId][manual|automatic] ?? package.price
+```
+
+A package is hidden for a location if `locationPricing[locationId]` is absent entirely.
+
+### License toggle
+
+If a category contains packages with both `forStudentsWithLicense: true` and `forStudentsWithLicense: false`, a "Do I already have a license?" toggle appears and filters the list accordingly.
+
+### Gearbox toggle
+
+Shown only for the **selected package**. If the package has a price only for one transmission type, a single non-switchable button is displayed.
+
+## Development
+
+```bash
+pnpm install
+pnpm dev        # dev server at localhost:5173
+```
+
+Update the `apiUrl` in [src/main.tsx](src/main.tsx) to point at your local CRM instance.
+
+## Build
+
+```bash
+pnpm build
+```
+
+Outputs `dist/calculator-widget.js` — a single IIFE bundle with styles injected. No external dependencies required on the host page.
