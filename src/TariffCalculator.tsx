@@ -99,7 +99,8 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
   const [locationId,   setLocationId]   = useState<string | null>(null);
   const [programSlug,  setProgramSlug]  = useState<string | null>(null);
   const [transmission, setTransmission] = useState<Transmission>('manual');
-  const [tariffIdx,    setTariffIdx]    = useState(0);
+  const [tariffId,     setTariffId]     = useState<string | null>(null);
+  const [attrFilters,  setAttrFilters]  = useState<Record<string, number | null>>({});
   const [licensed,     setLicensed]     = useState(false);
   const [data,         setData]         = useState<PricingData | null>(null);
   const [loading,      setLoading]      = useState(true);
@@ -129,8 +130,8 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
     return (pkg.features as string[]) ?? [];
   };
 
-  const { tariffs, showLicenseToggle } = useMemo(() => {
-    if (!activeSlug) return { tariffs: [], showLicenseToggle: false };
+  const { baseTariffs, showLicenseToggle, attributes } = useMemo(() => {
+    if (!activeSlug) return { baseTariffs: [], showLicenseToggle: false, attributes: [] };
 
     let pkgs = allPackages.filter(p => p.serviceCategory?.slug === activeSlug);
 
@@ -146,11 +147,33 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
       pkgs = pkgs.filter(p => p.pricingRules?.locationPricing?.[activeLocationId] != null);
     }
 
-    return { tariffs: pkgs, showLicenseToggle };
+    const attrMap = new Map<string, { attribute: any; values: Set<number> }>();
+    for (const pkg of pkgs) {
+      for (const link of (pkg.attributeLinks ?? []) as any[]) {
+        if (!attrMap.has(link.attribute.id)) {
+          attrMap.set(link.attribute.id, { attribute: link.attribute, values: new Set() });
+        }
+        attrMap.get(link.attribute.id)!.values.add(link.valueIndex);
+      }
+    }
+    const attributes = [...attrMap.values()].sort((a, b) => a.attribute.sortOrder - b.attribute.sortOrder);
+
+    return { baseTariffs: pkgs, showLicenseToggle, attributes };
   }, [allPackages, activeSlug, licensed, activeLocationId]);
 
-  const safeIdx  = Math.min(tariffIdx, Math.max(0, tariffs.length - 1));
-  const selected = tariffs[safeIdx];
+  const tariffs = useMemo(() =>
+    baseTariffs.filter(pkg =>
+      Object.entries(attrFilters).every(([attrId, valueIdx]) => {
+        if (valueIdx === null) return true;
+        const link = (pkg.attributeLinks ?? []).find((l: any) => l.attribute.id === attrId);
+        return link?.valueIndex === valueIdx;
+      })
+    ),
+  [baseTariffs, attrFilters]);
+
+  useEffect(() => { setAttrFilters({}); }, [activeSlug, activeLocationId, licensed]);
+
+  const selected = baseTariffs.find((t: any) => t.id === tariffId) ?? baseTariffs[0] ?? null;
 
   // which transmissions the selected package actually has prices for
   const availableTransmissions = {
@@ -171,8 +194,24 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
   const total          = selected ? getPrice(selected) : 0;
   const features       = selected ? getFeatures(selected) : [];
   const activeLocation = locations.find(l => l.id === activeLocationId);
+  const filteredIds    = new Set(tariffs.map((t: any) => t.id));
 
   const tariffStep = showLicenseToggle ? '5' : '4';
+
+  const availableForAttr = (attrId: string): Set<number> =>
+    new Set(
+      baseTariffs
+        .filter(pkg =>
+          Object.entries(attrFilters).every(([fId, vi]) => {
+            if (fId === attrId || vi === null) return true;
+            const link = (pkg.attributeLinks ?? []).find((l: any) => l.attribute.id === fId);
+            return link?.valueIndex === vi;
+          })
+        )
+        .flatMap((pkg: any) => pkg.attributeLinks ?? [])
+        .filter((l: any) => l.attribute.id === attrId)
+        .map((l: any) => l.valueIndex as number)
+    );
 
   return (
     <section className={s.section}>
@@ -197,7 +236,7 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
                 : locations.map(loc => (
                     <button
                       key={loc.id}
-                      onClick={() => { setLocationId(loc.id); setTariffIdx(0); }}
+                      onClick={() => { setLocationId(loc.id); setTariffId(null); }}
                       className={`${s.cityBtn} ${loc.id === activeLocationId ? s.cityBtnActive : ''}`}
                     >
                       {loc.name}
@@ -216,7 +255,7 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
                 : categories.map((cat: any) => (
                     <button
                       key={cat.slug}
-                      onClick={() => { setProgramSlug(cat.slug); setTariffIdx(0); }}
+                      onClick={() => { setProgramSlug(cat.slug); setTariffId(null); }}
                       className={`${s.programBtn} ${cat.slug === activeSlug ? s.programBtnActive : ''}`}
                     >
                       {li18n(cat.name)}
@@ -233,7 +272,7 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
               <div className={s.skeleton} style={{ height: 42, width: 220 }} />
             ) : (
               <div className={s.toggle}>
-                {/* fix 2: no setTariffIdx(0) — gearbox change shouldn't reset selection */}
+                {/* fix 2: no setTariffId(null) — gearbox change shouldn't reset selection */}
                 {/* fix 3: render only available options */}
                 {availableTransmissions.manual && (
                   <button
@@ -276,6 +315,31 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
             </div>
           )}
 
+          {/* Attributes */}
+          {!loading && attributes.length > 0 && (
+            <div className={s.attrRow}>
+              {attributes.map(attr => {
+                const available = availableForAttr(attr.attribute.id);
+                return (
+                  <select
+                    key={attr.attribute.id}
+                    className={s.attrSelect}
+                    value={attrFilters[attr.attribute.id] ?? ''}
+                    onChange={e => setAttrFilters(f => ({
+                      ...f,
+                      [attr.attribute.id]: e.target.value === '' ? null : Number(e.target.value),
+                    }))}
+                  >
+                    <option value="">{li18n(attr.attribute.titleI18n)}</option>
+                    {[...attr.values].sort((a: number, b: number) => a - b).filter(vi => available.has(vi)).map(vi => (
+                      <option key={vi} value={vi}>{li18n(attr.attribute.valuesI18n[vi])}</option>
+                    ))}
+                  </select>
+                );
+              })}
+            </div>
+          )}
+
           {/* Tariff */}
           <div className={s.field}>
             <p className={s.fieldLabel}>{tariffStep}. {tr.stepTariff}</p>
@@ -283,15 +347,18 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
               <div style={{ display: 'grid', gap: 8 }}>
                 {Array.from({ length: 3 }).map((_, i) => <div key={i} className={s.skeleton} style={{ height: 60 }} />)}
               </div>
-            ) : tariffs.length === 0 ? (
+            ) : baseTariffs.length === 0 ? (
               <p className={s.emptyText}>{tr.noPackages}</p>
             ) : (
               <div className={s.tariffList}>
-                {tariffs.map((t: any, i: number) => (
+                {baseTariffs.map((t: any) => {
+                  const disabled = !filteredIds.has(t.id);
+                  const active   = !disabled && selected?.id === t.id;
+                  return (
                   <button
                     key={t.id}
-                    onClick={() => setTariffIdx(i)}
-                    className={`${s.tariffBtn} ${i === safeIdx ? s.tariffBtnActive : ''}`}
+                    onClick={() => { if (!disabled) setTariffId(t.id); }}
+                    className={`${s.tariffBtn} ${active ? s.tariffBtnActive : ''} ${disabled ? s.tariffBtnDisabled : ''}`}
                   >
                     <div style={{ minWidth: 0 }}>
                       <p className={s.tariffName}>{t.name}</p>
@@ -301,7 +368,8 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
                       {getPrice(t)} <span className={s.tariffPriceUnit}>zł</span>
                     </p>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
