@@ -122,13 +122,10 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
     return field[locale] || field['pl'] || field['en'] || '';
   };
 
-  const getFeatures = (pkg: any): string[] => {
-    const fi = pkg.featuresI18n;
-    if (Array.isArray(fi) && fi.length > 0) {
-      return fi.map((f: any) => f[locale] || f['pl'] || '').filter(Boolean);
-    }
-    return (pkg.features as string[]) ?? [];
-  };
+  const getFeatures = (pkg: any): string[] =>
+    (pkg.attributeLinks ?? [])
+      .map((link: any) => li18n(link.attribute.valuesI18n?.[link.valueIndex]?.description))
+      .filter(Boolean);
 
   const { baseTariffs, showLicenseToggle, attributes } = useMemo(() => {
     if (!activeSlug) return { baseTariffs: [], showLicenseToggle: false, attributes: [] };
