@@ -321,7 +321,7 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
                 return (
                   <select
                     key={attr.attribute.id}
-                    className={s.attrSelect}
+                    className={`${s.attrSelect} ${attrFilters[attr.attribute.id] != null ? s.attrSelectActive : ''}`}
                     value={attrFilters[attr.attribute.id] ?? ''}
                     onChange={e => setAttrFilters(f => ({
                       ...f,
@@ -384,7 +384,11 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
           ) : (
             <>
               <p className={s.summaryCity}>{activeLocation?.name ?? '—'}</p>
-              <p className={s.summaryPackage}>{selected?.name ?? '—'}</p>
+              <p className={s.summaryPackage}>{li18n(selected?.serviceCategory?.name) ?? '—'}</p>
+              <div className={s.summaryMeta}>
+                <span className={s.summaryMetaLabel}>{tr.stepGearbox.replace(/^\d+\.\s*/, '')}</span>
+                <span>{tr[effectiveTransmission]}</span>
+              </div>
             </>
           )}
 
@@ -394,10 +398,15 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
             {loading ? (
               Array.from({ length: 2 }).map((_, i) => <div key={i} className={s.skeletonDark} style={{ height: 18 }} />)
             ) : (
-              <div className={s.priceRow}>
-                <span className={s.priceRowLabel}>{selected?.name ?? '—'}</span>
-                <span className={s.priceRowValue}>{selected ? getPrice(selected) : 0} zł</span>
-              </div>
+              <>
+                <div className={s.priceRow}>
+                  <span className={s.priceRowLabel}>{selected?.name ?? '—'}</span>
+                  <span className={s.priceRowValue}>{selected ? getPrice(selected) : 0} zł</span>
+                </div>
+                {selected && li18n(selected.subtitle) && (
+                  <p className={s.priceRowDesc}>{li18n(selected.subtitle)}</p>
+                )}
+              </>
             )}
           </div>
 

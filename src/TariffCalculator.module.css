@@ -326,6 +326,24 @@
   margin: 0;
 }
 
+.summaryMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 15px;
+  font-size: 13px;
+  color: #fff;
+}
+
+.summaryMetaLabel {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 2px;
+  color: rgba(255,255,255,0.4);
+}
+
 .divider {
   height: 1px;
   background: rgba(255,255,255,0.08);
@@ -357,6 +375,13 @@
   font-weight: 600;
   white-space: nowrap;
   color: #fff;
+}
+
+.priceRowDesc {
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+  margin: 0;
+  line-height: 1.4;
 }
 
 .featuresList {
@@ -466,6 +491,11 @@
 .attrSelect:focus {
   outline: none;
   border-color: #2563eb;
+}
+.attrSelectActive {
+  background: #18181b;
+  color: #fff;
+  border-color: #18181b;
 }
 
 .skeletonDark {
