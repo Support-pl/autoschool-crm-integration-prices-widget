@@ -124,6 +124,7 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
 
   const getFeatures = (pkg: any): string[] =>
     (pkg.attributeLinks ?? [])
+      .filter((link: any) => link.attribute.isActive)
       .map((link: any) => li18n(link.attribute.valuesI18n?.[link.valueIndex]?.description))
       .filter(Boolean);
 
@@ -146,7 +147,7 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
 
     const attrMap = new Map<string, { attribute: any; values: Set<number> }>();
     for (const pkg of pkgs) {
-      for (const link of (pkg.attributeLinks ?? []) as any[]) {
+      for (const link of (pkg.attributeLinks ?? []).filter((l: any) => l.attribute.isFilterable && l.attribute.isActive) as any[]) {
         if (!attrMap.has(link.attribute.id)) {
           attrMap.set(link.attribute.id, { attribute: link.attribute, values: new Set() });
         }
