@@ -6,6 +6,7 @@ export interface WidgetConfig {
   apiUrl: string;
   locale?: string;
   contactUrl?: string;
+  helpline?: Record<string, string>;
 }
 
 export function mount(selector: string, config: WidgetConfig) {

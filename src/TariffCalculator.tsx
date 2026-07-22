@@ -91,9 +91,10 @@ export interface TariffCalculatorProps {
   apiUrl: string;
   locale?: string;
   contactUrl?: string;
+  helpline?: Record<string, string>;
 }
 
-export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact' }: TariffCalculatorProps) {
+export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact', helpline }: TariffCalculatorProps) {
   const tr = translations[(locale as Locale) in translations ? (locale as Locale) : 'pl'];
 
   const [locationId,   setLocationId]   = useState<string | null>(null);
@@ -434,12 +435,16 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
           </div>
 
           <div style={{ marginTop: 32, display: 'grid', gap: 12 }}>
-            <a href={contactUrl} className={s.ctaBtn}>
+            <a href={selected ? `${contactUrl}?packageId=${selected.id}` : contactUrl} className={s.ctaBtn}>
               {tr.signUp} <ArrowRight size={16} />
             </a>
           </div>
 
           <p className={s.disclaimer}>{tr.disclaimer}</p>
+
+          {helpline?.[locale] && (
+            <p className={s.helpline}>{helpline[locale]}</p>
+          )}
         </div>
 
       </div>
