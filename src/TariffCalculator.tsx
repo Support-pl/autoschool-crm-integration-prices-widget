@@ -1,14 +1,77 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Calculator, ArrowRight, Check } from 'lucide-react';
 import s from './TariffCalculator.module.css';
 
+type I18nText = string | Record<string, string> | null | undefined;
+
+type Location = { id: string; name: string; city: string | null; code: string };
+
+type Category = {
+  id: string;
+  slug: string;
+  name: I18nText;
+  sortOrder: number;
+};
+
+type AttrValue = Record<string, string> & {
+  description?: Record<string, string>;
+};
+
+type Attribute = {
+  id: string;
+  title?: string;
+  titleI18n?: Record<string, string>;
+  valuesI18n?: AttrValue[];
+  sortOrder: number;
+  isFilterable: boolean;
+  isActive: boolean;
+};
+
+type AttributeLink = {
+  valueIndex: number;
+  /** Empty / missing = visible in all cities. */
+  cities?: string[];
+  attribute: Attribute;
+};
+
+type LocationPricing = {
+  manual?: number;
+  automatic?: number;
+};
+
+type PricingPackage = {
+  id: string;
+  name: string;
+  price: number;
+  subtitle?: I18nText;
+  forStudentsWithLicense?: boolean;
+  serviceCategory?: { slug: string; name?: I18nText };
+  pricingRules?: {
+    locationPricing?: Record<string, LocationPricing>;
+  };
+  attributeLinks?: AttributeLink[];
+};
+
 type PricingData = {
-  locations: { id: string; name: string; city: string | null; code: string }[];
-  categories: { id: string; slug: string; name: any; sortOrder: number }[];
-  packages: any[];
+  locations: Location[];
+  categories: Category[];
+  packages: PricingPackage[];
 };
 
 type Transmission = 'manual' | 'automatic';
+
+type AttrOption = {
+  attribute: Attribute;
+  values: number[];
+};
+
+/** Empty cities array = attribute is visible everywhere (backward compatible). */
+function isLinkVisibleInCity(link: AttributeLink, city: string | null | undefined): boolean {
+  const cities = link.cities;
+  if (!Array.isArray(cities) || cities.length === 0) return true;
+  if (!city) return true;
+  return cities.includes(city);
+}
 
 const translations = {
   pl: {
@@ -93,6 +156,12 @@ export interface TariffCalculatorProps {
   contactUrl?: string;
 }
 
+function li18n(field: I18nText, locale: string): string {
+  if (!field) return '';
+  if (typeof field === 'string') return field;
+  return field[locale] || field['pl'] || field['en'] || Object.values(field)[0] || '';
+}
+
 export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact' }: TariffCalculatorProps) {
   const tr = translations[(locale as Locale) in translations ? (locale as Locale) : 'pl'];
 
@@ -106,9 +175,19 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
   const [loading,      setLoading]      = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     fetch(apiUrl)
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false); });
+      .then((r) => r.json())
+      .then((d: PricingData) => {
+        if (!cancelled) {
+          setData(d);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [apiUrl]);
 
   const locations   = data?.locations ?? [];
@@ -116,67 +195,76 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
   const allPackages = data?.packages ?? [];
   const activeLocationId = locationId ?? locations[0]?.id ?? null;
   const activeSlug       = programSlug ?? categories[0]?.slug ?? null;
+  const activeLocation   = locations.find((l) => l.id === activeLocationId) ?? null;
+  /** Matches CRM `Location.city` / attributeLink.cities */
+  const activeCity       = activeLocation?.city || activeLocation?.name || null;
 
-  const li18n = (field: any): string => {
-    if (!field || typeof field === 'string') return field ?? '';
-    return field[locale] || field['pl'] || field['en'] || '';
-  };
+  const resetFilters = () => setAttrFilters({});
 
-  const getFeatures = (pkg: any): string[] =>
-    (pkg.attributeLinks ?? [])
-      .filter((link: any) => link.attribute.isActive)
-      .map((link: any) => li18n(link.attribute.valuesI18n?.[link.valueIndex]?.description))
+  const linksForCity = (pkg: PricingPackage): AttributeLink[] =>
+    (pkg.attributeLinks ?? []).filter(
+      (link) => link.attribute?.isActive && isLinkVisibleInCity(link, activeCity),
+    );
+
+  const findLinkInCity = (pkg: PricingPackage, attrId: string): AttributeLink | undefined =>
+    linksForCity(pkg).find((l) => l.attribute.id === attrId);
+
+  const getFeatures = (pkg: PricingPackage): string[] =>
+    linksForCity(pkg)
+      .map((link) => li18n(link.attribute.valuesI18n?.[link.valueIndex]?.description, locale))
       .filter(Boolean);
 
-  const { baseTariffs, showLicenseToggle, attributes } = useMemo(() => {
-    if (!activeSlug) return { baseTariffs: [], showLicenseToggle: false, attributes: [] };
+  // Derived — no useMemo (avoids React Compiler / eslint memoization noise)
+  let baseTariffs: PricingPackage[] = [];
+  let showLicenseToggle = false;
+  let attributes: AttrOption[] = [];
 
-    let pkgs = allPackages.filter(p => p.serviceCategory?.slug === activeSlug);
+  if (activeSlug) {
+    let pkgs = allPackages.filter((p) => p.serviceCategory?.slug === activeSlug);
 
-    const showLicenseToggle =
-      pkgs.some(p => p.forStudentsWithLicense === true) &&
-      pkgs.some(p => p.forStudentsWithLicense === false);
+    showLicenseToggle =
+      pkgs.some((p) => p.forStudentsWithLicense === true) &&
+      pkgs.some((p) => p.forStudentsWithLicense === false);
 
     if (showLicenseToggle) {
-      pkgs = pkgs.filter(p => p.forStudentsWithLicense === licensed);
+      pkgs = pkgs.filter((p) => p.forStudentsWithLicense === licensed);
     }
 
     if (activeLocationId) {
-      pkgs = pkgs.filter(p => p.pricingRules?.locationPricing?.[activeLocationId] != null);
+      pkgs = pkgs.filter((p) => p.pricingRules?.locationPricing?.[activeLocationId] != null);
     }
 
-    const attrMap = new Map<string, { attribute: any; values: Set<number> }>();
+    const attrMap = new Map<string, AttrOption>();
     for (const pkg of pkgs) {
-      for (const link of (pkg.attributeLinks ?? []).filter((l: any) => l.attribute.isFilterable && l.attribute.isActive) as any[]) {
-        if (!attrMap.has(link.attribute.id)) {
-          attrMap.set(link.attribute.id, { attribute: link.attribute, values: new Set() });
+      const visibleLinks = (pkg.attributeLinks ?? []).filter(
+        (l) => l.attribute?.isFilterable && l.attribute?.isActive && isLinkVisibleInCity(l, activeCity),
+      );
+      for (const link of visibleLinks) {
+        const existing = attrMap.get(link.attribute.id);
+        if (!existing) {
+          attrMap.set(link.attribute.id, { attribute: link.attribute, values: [link.valueIndex] });
+        } else if (!existing.values.includes(link.valueIndex)) {
+          existing.values.push(link.valueIndex);
         }
-        attrMap.get(link.attribute.id)!.values.add(link.valueIndex);
       }
     }
-    const attributes = [...attrMap.values()].sort((a, b) => a.attribute.sortOrder - b.attribute.sortOrder);
+    attributes = Array.from(attrMap.values()).sort((a, b) => a.attribute.sortOrder - b.attribute.sortOrder);
+    baseTariffs = pkgs;
+  }
 
-    return { baseTariffs: pkgs, showLicenseToggle, attributes };
-  }, [allPackages, activeSlug, licensed, activeLocationId]);
+  const tariffs = baseTariffs.filter((pkg) =>
+    Object.entries(attrFilters).every(([attrId, valueIdx]) => {
+      if (valueIdx === null) return true;
+      const link = findLinkInCity(pkg, attrId);
+      return link?.valueIndex === valueIdx;
+    }),
+  );
 
-  const tariffs = useMemo(() =>
-    baseTariffs.filter(pkg =>
-      Object.entries(attrFilters).every(([attrId, valueIdx]) => {
-        if (valueIdx === null) return true;
-        const link = (pkg.attributeLinks ?? []).find((l: any) => l.attribute.id === attrId);
-        return link?.valueIndex === valueIdx;
-      })
-    ),
-  [baseTariffs, attrFilters]);
+  const selected = baseTariffs.find((t) => t.id === tariffId) ?? baseTariffs[0] ?? null;
 
-  useEffect(() => { setAttrFilters({}); }, [activeSlug, activeLocationId, licensed]);
-
-  const selected = baseTariffs.find((t: any) => t.id === tariffId) ?? baseTariffs[0] ?? null;
-
-  // which transmissions the selected package actually has prices for
   const availableTransmissions = {
-    manual:    selected?.pricingRules?.locationPricing?.[activeLocationId]?.manual    != null,
-    automatic: selected?.pricingRules?.locationPricing?.[activeLocationId]?.automatic != null,
+    manual:    selected?.pricingRules?.locationPricing?.[activeLocationId ?? '']?.manual    != null,
+    automatic: selected?.pricingRules?.locationPricing?.[activeLocationId ?? '']?.automatic != null,
   };
 
   const effectiveTransmission: Transmission =
@@ -184,38 +272,34 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
     : availableTransmissions.manual      ? 'manual'
     : 'automatic';
 
-  const getPrice = (pkg: any): number => {
-    const lp = (pkg.pricingRules as any)?.locationPricing;
-    return lp?.[activeLocationId]?.[effectiveTransmission] ?? Number(pkg.price);
+  const getPrice = (pkg: PricingPackage): number => {
+    const lp = pkg.pricingRules?.locationPricing;
+    return lp?.[activeLocationId ?? '']?.[effectiveTransmission] ?? Number(pkg.price);
   };
 
-  const total          = selected ? getPrice(selected) : 0;
-  const features       = selected ? getFeatures(selected) : [];
-  const activeLocation = locations.find(l => l.id === activeLocationId);
-  const filteredIds    = new Set(tariffs.map((t: any) => t.id));
-
-  const tariffStep = showLicenseToggle ? '5' : '4';
+  const total       = selected ? getPrice(selected) : 0;
+  const features    = selected ? getFeatures(selected) : [];
+  const filteredIds = new Set(tariffs.map((t) => t.id));
+  const tariffStep  = showLicenseToggle ? '5' : '4';
 
   const availableForAttr = (attrId: string): Set<number> =>
     new Set(
       baseTariffs
-        .filter(pkg =>
+        .filter((pkg) =>
           Object.entries(attrFilters).every(([fId, vi]) => {
             if (fId === attrId || vi === null) return true;
-            const link = (pkg.attributeLinks ?? []).find((l: any) => l.attribute.id === fId);
-            return link?.valueIndex === vi;
-          })
+            return findLinkInCity(pkg, fId)?.valueIndex === vi;
+          }),
         )
-        .flatMap((pkg: any) => pkg.attributeLinks ?? [])
-        .filter((l: any) => l.attribute.id === attrId)
-        .map((l: any) => l.valueIndex as number)
+        .flatMap((pkg) => linksForCity(pkg))
+        .filter((l) => l.attribute.id === attrId)
+        .map((l) => l.valueIndex),
     );
 
   return (
     <section className={s.section}>
       <div className={s.card}>
 
-        {/* Form */}
         <div className={s.form}>
           <div className={s.header}>
             <div className={s.headerIcon}><Calculator size={20} /></div>
@@ -225,16 +309,20 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
             </div>
           </div>
 
-          {/* 1. City */}
           <div className={s.field}>
             <p className={s.fieldLabel}>{tr.stepCity}</p>
             <div className={s.cityGrid}>
               {loading
                 ? Array.from({ length: 4 }).map((_, i) => <div key={i} className={s.skeleton} style={{ height: 42 }} />)
-                : locations.map(loc => (
+                : locations.map((loc) => (
                     <button
                       key={loc.id}
-                      onClick={() => { setLocationId(loc.id); setTariffId(null); }}
+                      type="button"
+                      onClick={() => {
+                        setLocationId(loc.id);
+                        setTariffId(null);
+                        resetFilters();
+                      }}
                       className={`${s.cityBtn} ${loc.id === activeLocationId ? s.cityBtnActive : ''}`}
                     >
                       {loc.name}
@@ -244,36 +332,38 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
             </div>
           </div>
 
-          {/* 2. Service */}
           <div className={s.field}>
             <p className={s.fieldLabel}>{tr.stepService}</p>
             <div className={s.programGrid}>
               {loading
                 ? Array.from({ length: 3 }).map((_, i) => <div key={i} className={s.skeleton} style={{ height: 42 }} />)
-                : categories.map((cat: any) => (
+                : categories.map((cat) => (
                     <button
                       key={cat.slug}
-                      onClick={() => { setProgramSlug(cat.slug); setTariffId(null); }}
+                      type="button"
+                      onClick={() => {
+                        setProgramSlug(cat.slug);
+                        setTariffId(null);
+                        resetFilters();
+                      }}
                       className={`${s.programBtn} ${cat.slug === activeSlug ? s.programBtnActive : ''}`}
                     >
-                      {li18n(cat.name)}
+                      {li18n(cat.name, locale)}
                     </button>
                   ))
               }
             </div>
           </div>
 
-          {/* 3. Gearbox */}
           <div className={s.field}>
             <p className={s.fieldLabel}>{tr.stepGearbox}</p>
             {loading ? (
               <div className={s.skeleton} style={{ height: 42, width: 220 }} />
             ) : (
               <div className={s.toggle}>
-                {/* fix 2: no setTariffId(null) — gearbox change shouldn't reset selection */}
-                {/* fix 3: render only available options */}
                 {availableTransmissions.manual && (
                   <button
+                    type="button"
                     onClick={() => setTransmission('manual')}
                     className={`${s.toggleBtn} ${s.toggleBtnNo} ${effectiveTransmission === 'manual' ? s.active : ''}`}
                   >
@@ -282,6 +372,7 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
                 )}
                 {availableTransmissions.automatic && (
                   <button
+                    type="button"
                     onClick={() => setTransmission('automatic')}
                     className={`${s.toggleBtn} ${s.toggleBtnYes} ${effectiveTransmission === 'automatic' ? s.active : ''}`}
                   >
@@ -292,19 +383,20 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
             )}
           </div>
 
-          {/* 4. License */}
           {showLicenseToggle && (
             <div className={s.field}>
               <p className={s.fieldLabel}>{tr.stepLicense}</p>
               <div className={s.toggle}>
                 <button
-                  onClick={() => setLicensed(false)}
+                  type="button"
+                  onClick={() => { setLicensed(false); resetFilters(); }}
                   className={`${s.toggleBtn} ${s.toggleBtnNo} ${!licensed ? s.active : ''}`}
                 >
                   {tr.no}
                 </button>
                 <button
-                  onClick={() => setLicensed(true)}
+                  type="button"
+                  onClick={() => { setLicensed(true); resetFilters(); }}
                   className={`${s.toggleBtn} ${s.toggleBtnYes} ${licensed ? s.active : ''}`}
                 >
                   {tr.yes}
@@ -313,32 +405,34 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
             </div>
           )}
 
-          {/* Attributes */}
           {!loading && attributes.length > 0 && (
             <div className={s.attrRow}>
-              {attributes.map(attr => {
+              {attributes.map((attr) => {
                 const available = availableForAttr(attr.attribute.id);
                 return (
                   <select
                     key={attr.attribute.id}
                     className={`${s.attrSelect} ${attrFilters[attr.attribute.id] != null ? s.attrSelectActive : ''}`}
                     value={attrFilters[attr.attribute.id] ?? ''}
-                    onChange={e => setAttrFilters(f => ({
+                    onChange={(e) => setAttrFilters((f) => ({
                       ...f,
                       [attr.attribute.id]: e.target.value === '' ? null : Number(e.target.value),
                     }))}
                   >
-                    <option value="">{li18n(attr.attribute.titleI18n)}</option>
-                    {[...attr.values].sort((a: number, b: number) => a - b).filter(vi => available.has(vi)).map(vi => (
-                      <option key={vi} value={vi}>{li18n(attr.attribute.valuesI18n[vi])}</option>
-                    ))}
+                    <option value="">{li18n(attr.attribute.titleI18n, locale)}</option>
+                    {attr.values
+                      .slice()
+                      .sort((a, b) => a - b)
+                      .filter((vi) => available.has(vi))
+                      .map((vi) => (
+                        <option key={vi} value={vi}>{li18n(attr.attribute.valuesI18n?.[vi], locale)}</option>
+                      ))}
                   </select>
                 );
               })}
             </div>
           )}
 
-          {/* Tariff */}
           <div className={s.field}>
             <p className={s.fieldLabel}>{tariffStep}. {tr.stepTariff}</p>
             {loading ? (
@@ -349,23 +443,24 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
               <p className={s.emptyText}>{tr.noPackages}</p>
             ) : (
               <div className={s.tariffList}>
-                {baseTariffs.map((t: any) => {
+                {baseTariffs.map((t) => {
                   const disabled = !filteredIds.has(t.id);
                   const active   = !disabled && selected?.id === t.id;
                   return (
-                  <button
-                    key={t.id}
-                    onClick={() => { if (!disabled) setTariffId(t.id); }}
-                    className={`${s.tariffBtn} ${active ? s.tariffBtnActive : ''} ${disabled ? s.tariffBtnDisabled : ''}`}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <p className={s.tariffName}>{t.name}</p>
-                      {li18n(t.subtitle) && <p className={s.tariffSub}>{li18n(t.subtitle)}</p>}
-                    </div>
-                    <p className={s.tariffPrice}>
-                      {getPrice(t)} <span className={s.tariffPriceUnit}>zł</span>
-                    </p>
-                  </button>
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => { if (!disabled) setTariffId(t.id); }}
+                      className={`${s.tariffBtn} ${active ? s.tariffBtnActive : ''} ${disabled ? s.tariffBtnDisabled : ''}`}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <p className={s.tariffName}>{t.name}</p>
+                        {li18n(t.subtitle, locale) && <p className={s.tariffSub}>{li18n(t.subtitle, locale)}</p>}
+                      </div>
+                      <p className={s.tariffPrice}>
+                        {getPrice(t)} <span className={s.tariffPriceUnit}>zł</span>
+                      </p>
+                    </button>
                   );
                 })}
               </div>
@@ -373,7 +468,6 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
           </div>
         </div>
 
-        {/* Summary */}
         <div className={s.summary}>
           <p className={s.summaryTag}>{tr.estimate}</p>
           {loading ? (
@@ -384,7 +478,7 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
           ) : (
             <>
               <p className={s.summaryCity}>{activeLocation?.name ?? '—'}</p>
-              <p className={s.summaryPackage}>{li18n(selected?.serviceCategory?.name) ?? '—'}</p>
+              <p className={s.summaryPackage}>{li18n(selected?.serviceCategory?.name, locale) || '—'}</p>
               <div className={s.summaryMeta}>
                 <span className={s.summaryMetaLabel}>{tr.stepGearbox.replace(/^\d+\.\s*/, '')}</span>
                 <span>{tr[effectiveTransmission]}</span>
@@ -403,8 +497,8 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
                   <span className={s.priceRowLabel}>{selected?.name ?? '—'}</span>
                   <span className={s.priceRowValue}>{selected ? getPrice(selected) : 0} zł</span>
                 </div>
-                {selected && li18n(selected.subtitle) && (
-                  <p className={s.priceRowDesc}>{li18n(selected.subtitle)}</p>
+                {selected && li18n(selected.subtitle, locale) && (
+                  <p className={s.priceRowDesc}>{li18n(selected.subtitle, locale)}</p>
                 )}
               </>
             )}
@@ -414,7 +508,7 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
             <>
               <div className={s.divider} />
               <div className={s.featuresList}>
-                {features.map((f: string) => (
+                {features.map((f) => (
                   <div key={f} className={s.featureItem}>
                     <Check size={12} strokeWidth={3} className={s.featureIcon} />
                     {f}
