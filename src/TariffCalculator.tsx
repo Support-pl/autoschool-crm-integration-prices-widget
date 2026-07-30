@@ -232,7 +232,10 @@ export function TariffCalculator({ apiUrl, locale = 'pl', contactUrl = '/contact
     }
 
     if (activeLocationId) {
-      pkgs = pkgs.filter((p) => p.pricingRules?.locationPricing?.[activeLocationId] != null);
+      pkgs = pkgs.filter((p) => {
+        const lp = p.pricingRules?.locationPricing?.[activeLocationId];
+        return lp != null && (lp.manual != null || lp.automatic != null);
+      });
     }
 
     const attrMap = new Map<string, AttrOption>();

@@ -67,7 +67,7 @@ For a given package, location, and gearbox type the price resolves as:
 pricingRules.locationPricing[locationId][manual|automatic] ?? package.price
 ```
 
-A package is hidden for a location if `locationPricing[locationId]` is absent entirely.
+A package is hidden for a location if `locationPricing[locationId]` is absent, or if both `manual` and `automatic` prices are empty.
 
 ### License toggle
 
